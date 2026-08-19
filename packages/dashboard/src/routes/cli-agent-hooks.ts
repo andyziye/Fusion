@@ -39,6 +39,10 @@
 
 import { Router, type Request, type Response } from "express";
 import express from "express";
+// FNXC:HostGuard 2026-08-19-06:26: this route's loopback-only Host rule was the codebase's only
+// DNS-rebinding defense; it now lives in host-guard.ts so every surface shares one predicate.
+// Behavior here is unchanged — hooks stay loopback-only, stricter than the general allowlist.
+import { isLoopbackHost } from "../host-guard.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 /** Max accepted hook payload size. Hook payloads are small JSON envelopes. */
@@ -53,20 +57,6 @@ const SESSION_HEADER = "x-fusion-cli-session-id";
 export interface CliAgentHookHub {
   validateToken(sessionId: string, token: string | null | undefined): boolean;
   ingest(sessionId: string, event: unknown): unknown;
-}
-
-/** Loopback hosts the route accepts. Anything else is treated as cross-site. */
-function isLoopbackHost(host: string | undefined): boolean {
-  if (!host) return false;
-  // Strip a :port suffix (but keep IPv6 brackets intact for the comparison).
-  const bare = host.replace(/:\d+$/, "").toLowerCase();
-  return (
-    bare === "127.0.0.1" ||
-    bare === "localhost" ||
-    bare === "[::1]" ||
-    bare === "::1" ||
-    bare === "0.0.0.0"
-  );
 }
 
 /** First value of a (possibly array) header, trimmed. */

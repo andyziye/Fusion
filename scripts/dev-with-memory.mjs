@@ -42,10 +42,10 @@ let { watchSource } = parsedArgs;
 const nodeOptions = `--max-old-space-size=${MEMORY_MB} ${process.env.NODE_OPTIONS || ""}`.trim();
 process.env.NODE_OPTIONS = nodeOptions;
 
-// In dev we bind the dashboard to 0.0.0.0 so the server is reachable from
-// mobile devices and other machines on the LAN for testing. Production
-// builds default to 127.0.0.1; this override only applies when starting
-// the dashboard via `pnpm dev dashboard` and only if no --host was passed.
+// In dev we bind the dashboard to 127.0.0.1 — same as production. The injected host is only
+// applied when starting the dashboard via `pnpm dev dashboard` and only if no --host was passed,
+// so LAN/mobile testing stays available behind an explicit `--host 0.0.0.0`. See
+// buildForwardedDevArgs in dev-with-memory-lib.mjs for why the LAN default was withdrawn.
 const forwardedArgs = buildForwardedDevArgs(args);
 if (watchSource && forwardedArgs[0] !== "dashboard") {
   if (watchSourceFromFlag) {

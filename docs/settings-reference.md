@@ -46,6 +46,47 @@ See [Signals Connectors](./signals-connectors.md) for setup, signing, payload, a
 
 ---
 
+## Host allowlist (DNS-rebinding defense)
+
+<!--
+FNXC:HostGuard 2026-08-19-06:26:
+Documented as an operator-facing knob because enforcement is on by default: a reverse-proxy or
+custom-domain deployment that does not set this gets a blanket 403 with `{"error":"forbidden-host"}`,
+and without a documented variable that failure has no discoverable fix.
+-->
+
+The dashboard validates the HTTP `Host` header on every `/api/*` request and on all three WebSocket
+upgrades (`/api/terminal/ws`, `/api/ws`, `/api/cli-sessions/ws`). A request whose Host is not
+recognized is rejected with `403 {"error":"forbidden-host"}`.
+
+This blocks DNS rebinding, where a web page the operator visits rebinds its own hostname to
+`127.0.0.1` so the browser treats the local dashboard as same-origin — which makes CORS irrelevant
+and, with auth disabled, exposes every API read plus the in-browser terminal.
+
+Accepted without configuration:
+
+- **Loopback names** — `localhost`, `127.0.0.1`, `[::1]`, `0.0.0.0`.
+- **Any IP literal**, v4 or v6, including LAN addresses. Rebinding requires a *name*; a browser that
+  reached an IP literal never consulted DNS, so `--host 0.0.0.0` LAN/mobile testing is unaffected.
+- **No Host header at all** — native clients (the TUI, `curl` hook scripts) are gated by token and
+  ticket instead, and a browser cannot omit it.
+
+Any other DNS name must be allowlisted:
+
+| Source | Notes |
+|---|---|
+| `FUSION_ALLOWED_HOSTS` | Comma/whitespace-separated. Accepts a bare host, `host:port`, or a full URL; the port and path are ignored. `*` disables name checking entirely. |
+| Remote Access settings | The Tailscale hostname and Cloudflare ingress URL are seeded automatically, so a tunnel started from **Settings → Remote Access** needs no extra configuration. |
+| `allowedHosts` server option | For embedders calling `createServer` directly. |
+
+Set the variable when serving the dashboard through a reverse proxy or custom domain:
+
+```bash
+FUSION_ALLOWED_HOSTS="fusion.internal.example,fusion.example.com" fn dashboard
+```
+
+---
+
 ## Voice input
 
 `VoiceInputSettings` is exported from `@fusion/core`. Both global and project settings accept

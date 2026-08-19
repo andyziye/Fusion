@@ -95,7 +95,8 @@ describe("dev-with-memory prebuild options", () => {
   it("defaults a bare invocation to the dashboard command with the dev host", () => {
     // FNXC:DevWorkflow 2026-07-12-10:20: `pnpm dev`/`pnpm start` with no
     // command must equal `pnpm dev dashboard` (prebuild + host injection).
-    expect(buildForwardedDevArgs([])).toEqual(["dashboard", "--host", "0.0.0.0"]);
+    // FNXC:DevWorkflow 2026-08-19-06:26: injected host is loopback now.
+    expect(buildForwardedDevArgs([])).toEqual(["dashboard", "--host", "127.0.0.1"]);
   });
 
   it("defaults a flag-only invocation to the dashboard command, preserving flags", () => {
@@ -103,7 +104,7 @@ describe("dev-with-memory prebuild options", () => {
       "dashboard",
       "--paused",
       "--host",
-      "0.0.0.0",
+      "127.0.0.1",
     ]);
   });
 
@@ -122,11 +123,24 @@ describe("dev-with-memory prebuild options", () => {
     ]);
   });
 
-  it("injects a LAN-reachable dev host for dashboard startup without a host override", () => {
+  /*
+  FNXC:DevWorkflow 2026-08-19-06:26:
+  The injected dev host is loopback, not 0.0.0.0. `pnpm dev dashboard` binding every interface put
+  an auth-off dashboard — with its in-browser terminal — on whatever network the laptop was on.
+  */
+  it("injects a loopback dev host for dashboard startup without a host override", () => {
     expect(buildForwardedDevArgs(["dashboard", "--port", "4050"])).toEqual([
       "dashboard",
       "--port",
       "4050",
+      "--host",
+      "127.0.0.1",
+    ]);
+  });
+
+  it("still honors an explicit 0.0.0.0 override for deliberate LAN/mobile testing", () => {
+    expect(buildForwardedDevArgs(["dashboard", "--host", "0.0.0.0"])).toEqual([
+      "dashboard",
       "--host",
       "0.0.0.0",
     ]);

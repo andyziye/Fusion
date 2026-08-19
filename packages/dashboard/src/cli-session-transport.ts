@@ -25,6 +25,7 @@ import {
   type CliSessionAttachment,
   type CliStateChange,
 } from "@fusion/engine";
+import { isHostAllowed } from "./host-guard.js";
 import { emitCliSessionStateSseEvent } from "./sse.js";
 
 // ── Narrow interfaces the transport needs ────────────────────────────────────
@@ -285,6 +286,14 @@ export interface OriginCheckInput {
   secFetchSite?: string | undefined;
   /** Extra allowed origins (exact, scheme+host[:port]) from config. */
   extraAllowedOrigins?: string[];
+  /**
+   * Allowed Host-header names, from `FUSION_ALLOWED_HOSTS` / Remote Access settings.
+   *
+   * FNXC:HostGuard 2026-08-19-06:26:
+   * The same-host branch below is only meaningful once the Host itself is known-good; see
+   * host-guard.ts for why comparing Origin against an attacker-controlled Host is not a check.
+   */
+  allowedHosts?: readonly string[];
 }
 
 // ── SSE state bridge ─────────────────────────────────────────────────────────
@@ -344,7 +353,18 @@ export function bridgeCliStateToSse(
 }
 
 export function isOriginAllowed(input: OriginCheckInput): boolean {
-  const { origin, host, secFetchSite, extraAllowedOrigins } = input;
+  const { origin, host, secFetchSite, extraAllowedOrigins, allowedHosts } = input;
+
+  /*
+  FNXC:HostGuard 2026-08-19-06:26:
+  Reject an unrecognized Host before any Origin reasoning. Under DNS rebinding the Origin and Host
+  agree by construction (both are the attacker's name), so the same-host branch below returned true
+  for a cross-site page; the browser also considers the rebound origin same-origin, so CORS never
+  intervenes. Anchoring on the Host name is what makes the rest of this function meaningful.
+  */
+  if (!isHostAllowed({ host, allowedHosts })) {
+    return false;
+  }
 
   // No Origin header.
   if (!origin) {

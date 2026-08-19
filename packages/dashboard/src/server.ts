@@ -71,6 +71,7 @@ import { CliChatSessionRunner } from "./cli-chat.js";
 import { stopAllDevServers } from "./dev-server-routes.js";
 import type { SkillsAdapter } from "./skills-adapter.js";
 import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
+import { allowedHostsOrFallback, createHostGuardMiddleware, isHostAllowed, resolveHostAllowlist } from "./host-guard.js";
 import { buildRemoteSessionCookie, createRemoteSessionStore, resolveRemoteSessionTtlMs } from "./remote-session.js";
 import { setupCliSessionWebSocket } from "./cli-session-ws.js";
 import { createCliSessionsRouter } from "./routes/cli-sessions.js";
@@ -498,6 +499,9 @@ export interface ServerOptions {
    *  FUSION_DASHBOARD_TOKEN env vars. Used by `fn dashboard --no-auth` so a
    *  stale token in a project .env doesn't silently override the flag. */
   noAuth?: boolean;
+  /** Additional Host-header names this server may be reached by (reverse proxy, tunnel).
+   *  FNXC:HostGuard 2026-08-19-06:26: only DNS names need an entry; see host-guard.ts. */
+  allowedHosts?: readonly string[];
   /*
   FNXC:ApprovalDecisionAuthority 2026-07-26-16:10:
   Resolved auth-middleware state, wired by createServer once it has decided whether the
@@ -635,7 +639,18 @@ type DashboardExpressApp = ReturnType<typeof express> & {
   badgeWsServer?: WebSocketServer | null;
   badgeWsManager?: WebSocketManager | null;
   __fnWebSocketsAttached?: boolean;
+  /*
+  FNXC:HostGuard 2026-08-19-06:26:
+  One resolved Host allowlist per server instance (not module scope — a process can host several),
+  so the separately-exported WebSocket upgrade gates enforce the same set as the HTTP middleware.
+  */
+  __fnAllowedHosts?: Set<string>;
 };
+
+// FNXC:HostGuard 2026-08-19-06:26: per-instance Host allowlist; rule and fallback in host-guard.ts.
+function resolveAllowedHosts(app: ReturnType<typeof express>, options?: ServerOptions): readonly string[] {
+  return allowedHostsOrFallback((app as DashboardExpressApp).__fnAllowedHosts, options?.allowedHosts);
+}
 
 function shouldForceLocalhostForTests(): boolean {
   return process.env.NODE_ENV === "test";
@@ -1025,6 +1040,20 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       return next(error);
     });
   });
+
+  /*
+  FNXC:HostGuard 2026-08-19-06:26:
+  Host-header validation is mounted BEFORE (and independently of) the bearer-token middleware: the
+  attack it stops is exactly the no-token case — a `--no-auth` localhost dashboard reached by a page
+  that rebound its own DNS name to 127.0.0.1. Gating it on `daemonToken` would disable it in the one
+  configuration that needs it. Policy lives in host-guard.ts; see it for the allowlist rule.
+  */
+  const resolvedAllowedHosts = resolveHostAllowlist({
+    optionHosts: options?.allowedHosts,
+    loadRemoteAccess: () => store.getGlobalSettingsStore().getSettings(),
+  });
+  (app as DashboardExpressApp).__fnAllowedHosts = resolvedAllowedHosts;
+  app.use(createHostGuardMiddleware(resolvedAllowedHosts));
 
   // Daemon mode: bearer token authentication middleware
   // Auth is enabled when daemon option is provided OR FUSION_DAEMON_TOKEN env var is set.
@@ -2423,6 +2452,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           daemonToken: getDaemonToken(options),
           noAuth: options?.noAuth,
           extraAllowedOrigins: options.cliSessionTransport.extraAllowedOrigins,
+          // FNXC:HostGuard 2026-08-19-06:26: a resolver, not a snapshot — Remote Access hostnames
+          // are seeded after this wiring runs, so an array here would 403 a legitimate tunnel.
+          resolveAllowedHosts: () => resolveAllowedHosts(app, options),
         });
       }
     }
@@ -2462,6 +2494,17 @@ export function setupTerminalWebSocket(
   server.on("upgrade", (req, socket, head) => {
     const pathname = new URL(req.url || "", `http://${req.headers.host}`).pathname;
     if (pathname !== "/api/terminal/ws") {
+      return;
+    }
+
+    /*
+    FNXC:HostGuard 2026-08-19-06:26:
+    This upgrade had NO Host or Origin check — only the token gate, which `--no-auth` skips, making
+    it the weakest WS surface: a DNS-rebound page reached a shell without even an attach ticket.
+    */
+    if (!isHostAllowed({ host: req.headers.host, allowedHosts: resolveAllowedHosts(app, options) })) {
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
       return;
     }
 
@@ -2798,6 +2841,14 @@ export function setupBadgeWebSocket(
   server.on("upgrade", (req, socket, head) => {
     const pathname = new URL(req.url || "", `http://${req.headers.host}`).pathname;
     if (pathname !== "/api/ws") {
+      return;
+    }
+
+    // FNXC:HostGuard 2026-08-19-06:26: Same DNS-rebinding guard as the terminal upgrade; the badge
+    // stream carries task/project state, so it must not be readable by a rebound cross-site page.
+    if (!isHostAllowed({ host: req.headers.host, allowedHosts: resolveAllowedHosts(app, options) })) {
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
       return;
     }
 
