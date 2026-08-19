@@ -109,15 +109,23 @@ export function buildForwardedDevArgs(args) {
   /*
   FNXC:DevWorkflow 2026-07-12-10:20:
   `pnpm dev` and `pnpm start` with no command must behave exactly like
-  `pnpm dev dashboard` (client prebuild + LAN host injection), not fall through
+  `pnpm dev dashboard` (client prebuild + host injection), not fall through
   to the CLI's bare default. Normalize empty/flag-only invocations to an
   explicit "dashboard" command so every downstream decision (prebuild mode,
   host injection) sees the same shape.
+
+  FNXC:DevWorkflow 2026-08-19-06:26:
+  The injected host is now LOOPBACK, not 0.0.0.0. `pnpm dev dashboard` used to bind every
+  interface so phones and other LAN machines could reach it, but on an untrusted network (office,
+  cafe, conference wifi) that publishes a dashboard which — with auth off — exposes an in-browser
+  terminal to the whole subnet. Reaching a dev box from a phone is occasional; leaking a shell is
+  not an acceptable default for it. `hasHostOverride` still wins, so deliberate LAN testing is one
+  explicit flag away: `pnpm dev dashboard --host 0.0.0.0`.
   */
   const hasCommand = args.length > 0 && !String(args[0]).startsWith("-");
   const normalized = hasCommand ? args : ["dashboard", ...args];
   const needsDevHostInjection = normalized[0] === "dashboard" && !hasHostOverride(normalized);
-  return needsDevHostInjection ? [...normalized, "--host", "0.0.0.0"] : normalized;
+  return needsDevHostInjection ? [...normalized, "--host", "127.0.0.1"] : normalized;
 }
 
 export function parseDevWrapperArgs(rawArgs, env = process.env) {

@@ -60,6 +60,14 @@ export interface CliSessionWebSocketOptions extends CliSessionTransportDeps {
   noAuth?: boolean;
   /** Extra allowed WS Origins (scheme+host[:port]). */
   extraAllowedOrigins?: string[];
+  /**
+   * Resolver for allowed Host-header names (DNS-rebinding allowlist); see host-guard.ts.
+   *
+   * FNXC:HostGuard 2026-08-19-06:26:
+   * Evaluated per upgrade rather than captured at setup, because the server seeds Remote Access
+   * hostnames asynchronously and a snapshot taken here would predate any tunnel.
+   */
+  resolveAllowedHosts?: () => readonly string[];
   highWatermarkBytes?: number;
   lowWatermarkBytes?: number;
 }
@@ -94,12 +102,14 @@ export function setupCliSessionWebSocket(
       }
     }
 
-    // 2. Origin allowlist.
+    // 2. Host + Origin allowlist. The Host check runs first inside isOriginAllowed — an
+    //    unrecognized Host name is a DNS-rebinding attempt and never reaches the ticket gate.
     const originOk = isOriginAllowed({
       origin: headerStr(req, "origin"),
       host: headerStr(req, "host"),
       secFetchSite: headerStr(req, "sec-fetch-site"),
       extraAllowedOrigins: options.extraAllowedOrigins,
+      allowedHosts: options.resolveAllowedHosts?.(),
     });
     if (!originOk) {
       reject(403, "Forbidden");
